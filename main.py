@@ -2,7 +2,9 @@
 
 import json
 from pathlib import Path
+import xml.etree.ElementTree as ET
 import subprocess
+import re
 
 class Config:
   KEY_USEGIT  = "git_enable"
@@ -25,29 +27,38 @@ class Config:
 
     with open(str(config_file)) as file:
       self.config = json.load(file)
-    
-    if self.config[Config.KEY_AUTOUPDATE_GIT]:
-      self.update_git()
-
-  def build(self):
-    subprocess.run(["mvn", "package"])
-
-  def run(self):
-    subprocess.run(["java", "-jar", self.config[Config.KEY_JAR_PATH]])
   
-  def update_git(self):
-    if not self.config[Config.KEY_USEGIT]:
-      return
-    
-    subprocess.run(["git", "fetch", self.config[Config.KEY_REMOTES]])
-    subprocess.run(["git", "reset", self.config[Config.KEY_REMOTES] + "/" + self.config[Config.KEY_BRANCH], "--hard"])
+  def is_git_enabled(self):
+    return self.config[Config.KEY_USEGIT]
+  
+  def is_autoupdating(self):
+    return self.is_git_enabled() and self.config[Config.KEY_AUTOUPDATE_GIT]
+  
+  def get_git_remote(self):
+    return self.config[Config.KEY_REMOTES]
+  
+  def get_git_branch(self):
+    return self.config[Config.KEY_BRANCH]
+  
+  def get_jar_path(self):
+    return self.config[Config.KEY_JAR_PATH]
   
   def generate_config(self, config_file):
     use_git = False
     remotes = "origin"
     branch  = "main"
     autoupdate = False
-    jar_path = "target/main.jar"
+
+    jar_artifact = "main"
+    jar_version  = "1.0"
+    project_xml = ET.parse(self.project_file)
+    m = re.match(r'\{.*\}', project_xml.getroot().tag)
+    namespace = m.group(0) if m else ''
+    for tag in project_xml.findall("{}artifactId".format(namespace)):
+      jar_artifact = tag.text
+    for tag in project_xml.findall("{}version".format(namespace)):
+      jar_version = tag.text
+    jar_path = "target/{}-{}.jar".format(jar_artifact, jar_version)
    
     use_git = subprocess.run(["git", "status"], capture_output=True, text=True).stdout != ""
     if use_git:
@@ -63,7 +74,30 @@ class Config:
     with open(str(config_file), "w") as file:
       json.dump(config, file)
 
+class Handler:
+  def __init__(self, config = None):
+    if not config:
+      config = Config()
+    self.config = config
+
+  def update(self):
+    if not self.config.is_git_enabled():
+      return
+    subprocess.run(["git", "fetch", self.config.get_git_remote()])
+    subprocess.run(["git", "reset", self.config.get_git_remote() + "/" + self.config.get_git_branch(), "--hard"])
+
+  def build(self, run_tests = False):
+    if self.config.is_autoupdating():
+      self.update()
+    cmd = ["mvn", "package"]
+    if not run_tests:
+      cmd.append("-DskipTests")
+    subprocess.run(cmd)
+
+  def run(self):
+    subprocess.run(["java", "-jar", self.config.get_jar_path()])
+
 if __name__ == "__main__":
-  config = Config()
-  config.build()
-  config.run()
+  handler = Handler()
+  handler.build()
+  handler.run()
