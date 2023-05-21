@@ -5,6 +5,9 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 import subprocess
 import re
+import sys
+from queue import Queue
+from threading import Thread
 
 class Config:
   KEY_USEGIT  = "git_enable"
@@ -60,9 +63,9 @@ class Config:
       jar_version = tag.text
     jar_path = "target/{}-{}.jar".format(jar_artifact, jar_version)
    
-    use_git = subprocess.run(["git", "status"], capture_output=True, text=True).stdout != ""
+    use_git = subprocess.run(["git", "status"], capture_output=True, text=True, cwd=str(self.dir)).stdout != ""
     if use_git:
-      branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True).stdout.strip()
+      branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, cwd=str(self.dir)).stdout.strip()
 
     config = {
       Config.KEY_USEGIT  : use_git,
@@ -83,8 +86,8 @@ class Handler:
   def update(self):
     if not self.config.is_git_enabled():
       return
-    subprocess.run(["git", "fetch", self.config.get_git_remote()])
-    subprocess.run(["git", "reset", self.config.get_git_remote() + "/" + self.config.get_git_branch(), "--hard"])
+    subprocess.run(["git", "fetch", self.config.get_git_remote()], cwd=str(self.config.dir))
+    subprocess.run(["git", "reset", self.config.get_git_remote() + "/" + self.config.get_git_branch(), "--hard"], cwd=str(self.config.dir))
 
   def build(self, run_tests = False):
     if self.config.is_autoupdating():
@@ -97,7 +100,74 @@ class Handler:
   def run(self):
     subprocess.run(["java", "-jar", self.config.get_jar_path()])
 
+  def popen(self):
+    return subprocess.Popen(["java", "-jar", self.config.get_jar_path()],
+                      stdout = subprocess.PIPE,
+                      stdin = subprocess.PIPE,
+                      text = True)
+
+class BasicProgram:
+  def __init__(self, handler: Handler):
+    self.handler = handler
+    self.prog = None
+    self.out = None
+    self.err = None
+  
+  def start(self):
+    self.end()
+    
+    self.out = None
+    self.err = None
+    self.prog = self.handler.popen()
+
+  def write(self, line):
+    if self.prog:
+      self.prog.stdin.write(line + "\n")
+      self.prog.stdin.flush()
+  
+  def end(self):
+    if self.prog:
+      self.out, self.err = self.prog.communicate()
+      self.prog = None
+  
+  def update(self):
+    self.end()
+    handler.update()
+    handler.build()
+    self.start()
+  
+  def ping(self):
+    self.write("ping")
+  
+  def quit(self):
+    self.write("quit")
+
 if __name__ == "__main__":
   handler = Handler()
   handler.build()
-  handler.run()
+
+  if len(sys.argv) == 2:
+    program = sys.argv[1]
+
+    if program == "pong":
+      prog = BasicProgram(handler)
+      prog.start()
+
+      prog.ping()
+      prog.ping()
+      prog.ping()
+      prog.quit()
+
+      prog.end()
+
+      if prog.out:
+        print("stdout:")
+        print(prog.out)
+
+      if prog.err:
+        print("stderr:")
+        print(prog.err)
+    else:
+      print("Unknown program {}".format(program), file=sys.stderr)
+  else:
+    handler.run()
