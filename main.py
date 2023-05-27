@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import sys
-from handler import Handler
+from handler import Config, Handler
 from program import BasicProgram
 
 if __name__ == "__main__":
-  handler = Handler()
-  handler.build()
+  config = Config()
+  handler = Handler(config)
+  if config.is_autobuilding():
+    handler.build()
 
   if len(sys.argv) == 2:
     program = sys.argv[1]
@@ -16,19 +18,14 @@ if __name__ == "__main__":
       prog.start()
 
       prog.ping()
-      prog.ping()
-      prog.ping()
+      prog.message("User", "Hello world")
       prog.quit()
 
-      prog.end()
+      prog.stop()
 
-      if prog.out:
-        print("stdout:")
-        print(prog.out)
-
-      if prog.err:
-        print("stderr:")
-        print(prog.err)
+      if prog.output:
+        print("output:")
+        print(prog.output)
     else:
       print("Unknown program {}".format(program), file=sys.stderr)
   else:
