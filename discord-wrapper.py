@@ -17,9 +17,43 @@ client = Client(command_prefix='/', intents=intents)
 tree = app_commands.CommandTree(client)
 
 handler = Handler()
-prog = BasicProgram(handler)
-cur_message = None
-cur_reader = None
+
+class Session:
+  def __init__(self, handler: Handler, channel):
+    self.prog: BasicProgram = BasicProgram(handler)
+    self.channel = channel
+    self.log_message: Message = None
+    self.cur_reader = None
+
+  async def output_event(self, line):
+    if self.log_message:
+      await self.log_message.edit(content=f"```{self.prog.output} ```")
+
+  async def start(self, context):
+    is_slash_command = isinstance(context, Interaction)
+
+    if self.prog.is_running():
+      self.prog.stop()
+
+    self.log_message = None
+    if self.cur_reader:
+      self.cur_reader.cancel()
+      await self.cur_reader
+    self.cur_reader = None
+
+    response = self.prog.start()
+    self.log_message = await (context.channel if is_slash_command else context).send(response)
+    self.cur_reader = asyncio.create_task(self.prog.queue_reader_loop(callback=self.output_event))
+
+sessions = {}
+
+def get_session(channel, create_if_not_exists = True) -> Session:
+  if channel.id in sessions:
+    return sessions[channel.id]
+  if create_if_not_exists:
+    sessions.update({channel.id: Session(handler, channel)})
+    return sessions[channel.id]
+  return None
 
 delete_after_timer = 120
 
@@ -31,38 +65,18 @@ async def on_ready():
 async def setup_hook():
   await tree.sync()
 
-async def output_event(line):
-  if cur_message:
-    await cur_message.edit(content=f"```{prog.output} ```")
-
-async def start(context):
-  global cur_reader
-  global cur_message
-
-  is_slash_command = isinstance(context, Interaction)
-
-  if prog.is_running():
-    prog.stop()
-
-  cur_message = None
-  if cur_reader:
-    cur_reader.cancel()
-    await cur_reader
-  cur_reader = None
-
-  response = prog.start()
-  cur_message = await (context.channel if is_slash_command else context).send(response)
-  cur_reader = asyncio.create_task(prog.queue_reader_loop(callback=output_event))
-
 async def execute(context, command, args=None):
   is_slash_command = isinstance(context, Interaction)
   is_text_command  = isinstance(context, TextChannel) or isinstance(context, DMChannel)
 
   if is_slash_command:
     await context.response.defer()
+    session = get_session(context.channel)
+  else:
+    session = get_session(context)
 
-  if command != prog.update and not prog.is_running():
-    await start(context)
+  if command != session.prog.update and not session.prog.is_running():
+    await session.start(context)
   
   response = None
   if args:
@@ -87,49 +101,57 @@ async def on_message(message):
   user_message = str(message.content)
   channel = message.channel
 
+  session = get_session(channel)
+
   match user_message:
     case "/start":
-      await start(channel)
+      await session.start(channel)
     case "/ping":
-      await execute(channel, prog.ping)
+      await execute(channel, session.prog.ping)
     case "/update":
-      await execute(channel, prog.update)
+      await execute(channel, session.prog.update)
     case "/quit":
-      await execute(channel, prog.quit)
+      await execute(channel, session.prog.quit)
     case "/stop":
-      response = prog.stop()
+      response = session.prog.stop()
       await channel.send(f"```{response} ```", delete_after=delete_after_timer)
     case _:
-      await execute(channel, prog.message, (username, user_message,))
+      await execute(channel, session.prog.message, (username, user_message,))
 
 @tree.command(name="start", description="Start the bot")
 async def start_command(interaction: Interaction):
-  await start(interaction)
+  session = get_session(interaction.channel)
+  await session.start(interaction)
   await interaction.response.send_message("Done", ephemeral=True)
 
 @tree.command(name="update", description="Update the bot")
 async def update_command(interaction: Interaction):
-  await execute(interaction, prog.update)
+  session = get_session(interaction.channel)
+  await execute(interaction, session.prog.update)
 
 @tree.command(name="stop", description="Stop the bot")
 async def stop_command(interaction: Interaction):
-  if not prog.is_running():
+  session = get_session(interaction.channel)
+  if not session.prog.is_running():
     await interaction.response.send_message("Use the `/start` command first!", ephemeral=True)
     return
-  response = prog.stop()
+  response = session.prog.stop()
   await interaction.response.send_message(f"```{response} ```")
 
 @tree.command(name="ping", description="Send the 'ping' command to the bot")
 async def ping_command(interaction: Interaction):
-  await execute(interaction, prog.ping)
+  session = get_session(interaction.channel)
+  await execute(interaction, session.prog.ping)
 
 @tree.command(name="message", description="Send the 'message' command to the bot")
 async def message_command(interaction: Interaction, *, text: str):
-  await execute(interaction, prog.message, args=(str(interaction.user), text, ))
+  session = get_session(interaction.channel)
+  await execute(interaction, session.prog.message, args=(str(interaction.user), text, ))
 
 @tree.command(name="quit", description="Send the 'quit' command to the bot")
 async def quit_command(interaction: Interaction):
-  await execute(interaction, prog.quit)
+  session = get_session(interaction.channel)
+  await execute(interaction, session.prog.quit)
 
 if __name__ == "__main__":
   handler.build()
