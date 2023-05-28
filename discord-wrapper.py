@@ -4,7 +4,7 @@ import sys
 import asyncio
 from discord import app_commands, Message, Intents, Interaction, Client, TextChannel, DMChannel
 from handler import Handler
-from program import BasicProgram
+from program import MessageBasedProgram
 
 if len(sys.argv) != 2:
   print("Error: expected bot token as the only argument", file=sys.stderr)
@@ -20,7 +20,7 @@ handler = Handler()
 
 class Session:
   def __init__(self, handler: Handler, channel):
-    self.prog: BasicProgram = BasicProgram(handler)
+    self.prog: MessageBasedProgram = MessageBasedProgram(handler)
     self.channel = channel
     self.log_message: Message = None
     self.cur_reader = None
@@ -28,6 +28,10 @@ class Session:
   async def output_event(self, line):
     if self.log_message:
       await self.log_message.edit(content=f"```{self.prog.output} ```")
+
+  async def message_event(self, line):
+    if self.channel:
+      await self.channel.send(content=line)
 
   async def start(self, context):
     is_slash_command = isinstance(context, Interaction)
@@ -42,8 +46,11 @@ class Session:
     self.cur_reader = None
 
     response = self.prog.start()
-    self.log_message = await (context.channel if is_slash_command else context).send(response)
-    self.cur_reader = asyncio.create_task(self.prog.queue_reader_loop(callback=self.output_event))
+    if is_slash_command:
+      self.log_message = await context.channel.send(response)
+    else:
+      self.log_message = await context.send(response)
+    self.cur_reader = asyncio.create_task(self.prog.queue_reader_loop(callback=self.output_event, message_callback=self.message_event))
 
 sessions = {}
 
@@ -70,7 +77,7 @@ async def execute(context, command, args=None):
   is_text_command  = isinstance(context, TextChannel) or isinstance(context, DMChannel)
 
   if is_slash_command:
-    await context.response.defer()
+    await context.response.defer(ephemeral=True)
     session = get_session(context.channel)
   else:
     session = get_session(context)
@@ -88,7 +95,10 @@ async def execute(context, command, args=None):
     if response:
       await context.send(content=response, delete_after=delete_after_timer)
   elif is_slash_command:
-    await context.followup.send(content=(response if response else "Done"), ephemeral=True)
+    if response:
+      await context.followup.send(content=response)
+    else:
+      await context.followup.send(content="Done")
   else:
     print(f"Unknown context kind {context}", file=sys.stderr)
 

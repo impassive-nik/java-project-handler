@@ -2,7 +2,7 @@
 
 import sys
 from handler import Config, Handler
-from program import BasicProgram
+from program import BasicProgram, MessageBasedProgram
 
 if __name__ == "__main__":
   config = Config()
@@ -18,7 +18,18 @@ if __name__ == "__main__":
       prog.start()
 
       prog.ping()
-      prog.message("User", "Hello world")
+      prog.quit()
+
+      prog.stop()
+
+      if prog.output:
+        print("output:")
+        print(prog.output)
+    elif program == "msg":
+      prog = MessageBasedProgram(handler)
+      prog.start()
+
+      prog.message(sender="User", text="Some message")
       prog.quit()
 
       prog.stop()

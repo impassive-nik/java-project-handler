@@ -89,12 +89,58 @@ class BasicProgram:
     self.write("ping")
     return None
   
+  def quit(self):
+    self.write("quit")
+    return None
+
+class MessageBasedProgram(BasicProgram):
+  def __init__(self, handler: Handler):
+    super().__init__(handler=handler)
+    self.timer = None
+  
   def message(self, sender : str, text : str):
     self.write("message")
     self.write(sender.split("\n")[0])
     self.write(text.split("\n")[0])
     return None
   
-  def quit(self):
-    self.write("quit")
-    return None
+  def timer_event(self):
+    print("timer event")
+    self.write("timer")
+    self.timer.cancel()
+    self.timer = None
+  
+  async def queue_reader_loop(self, delay : int = 1, callback = None, message_callback = None):
+    while True:
+      if not self.output_queue:
+        break
+      while not self.output_queue.empty():
+        line: str = self.output_queue.get_nowait()
+        if not line.startswith("/"):
+          self.output += line + "\n"
+          if callback:
+            await callback(line)
+
+        if line.startswith("/message") and message_callback:
+          text = line[len("/message"):].lstrip()
+          await message_callback(text + " ")
+        elif line.startswith("/timer"):
+          text = line[len("/timer"):].lstrip()
+
+          if self.timer:
+            self.timer.cancel()
+            self.timer = None
+
+          try:
+            timer = int(text)
+            loop = asyncio.get_event_loop()
+            if timer > 0:
+              print("the timer was set on " + str(timer) + " seconds")
+              self.timer = loop.call_later(timer, self.timer_event)
+          except ValueError:
+            pass
+        else:
+          self.output += line + "\n"
+          if callback:
+            await callback(line)
+      await asyncio.sleep(delay)
