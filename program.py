@@ -120,8 +120,7 @@ class MessageBasedProgram(BasicProgram):
           self.output += line + "\n"
           if callback:
             await callback(line)
-
-        if line.startswith("/message") and message_callback:
+        elif line.startswith("/message") and message_callback:
           text = line[len("/message"):].lstrip()
           await message_callback(text + " ")
         elif line.startswith("/timer"):
@@ -140,7 +139,7 @@ class MessageBasedProgram(BasicProgram):
           except ValueError:
             pass
         else:
-          self.output += line + "\n"
+          self.output += "Unknown command " + line + "\n"
           if callback:
             await callback(line)
       await asyncio.sleep(delay)
